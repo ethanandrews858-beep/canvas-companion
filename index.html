@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Canvas Companion</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <div class="container">
+
+    <!-- NAVBAR -->
+    <header class="navbar">
+      <div class="nav-left">
+        <h1>Canvas Companion</h1>
+      </div>
+
+      <div class="nav-right">
+        <div class="settings-dropdown-wrapper">
+          <button class="nav-btn" type="button" id="login-nav-btn" onclick="toggleLogin()">Login</button>
+
+          <div id="login-panel" class="settings-dropdown login-dropdown hidden">
+            <div id="auth-logged-out">
+              <div class="auth-header">
+                <h2>Account</h2>
+                <div class="auth-tabs">
+                  <button type="button" class="auth-tab active" id="tab-login" onclick="showAuthForm('login')">Login</button>
+                  <button type="button" class="auth-tab" id="tab-register" onclick="showAuthForm('register')">Register</button>
+                </div>
+              </div>
+              <div class="auth-form-col">
+                <input type="email" id="auth-email" placeholder="Email" autocomplete="email" />
+                <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password" />
+                <button type="button" id="auth-submit" onclick="submitAuth()">Login</button>
+              </div>
+              <p class="auth-error hidden" id="auth-error"></p>
+            </div>
+            <div id="auth-logged-in" class="hidden">
+              <p class="auth-signed-in-label">Syncing as <strong id="auth-user-email"></strong></p>
+              <button type="button" onclick="logout()">Logout</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-dropdown-wrapper">
+          <button class="nav-btn" type="button" onclick="toggleSettings()">Settings</button>
+
+          <section id="settings-panel" class="settings-dropdown hidden">
+            <h2>Settings</h2>
+
+            <div class="settings-card-section">
+              <h3>School Year</h3>
+
+              <label>Quarter 1 Start
+                <input type="date" id="q1-start">
+              </label>
+
+              <label>Quarter 1 End
+                <input type="date" id="q1-end">
+              </label>
+
+              <label>Quarter 2 Start
+                <input type="date" id="q2-start">
+              </label>
+
+              <label>Quarter 2 End
+                <input type="date" id="q2-end">
+              </label>
+
+              <label>Quarter 3 Start
+                <input type="date" id="q3-start">
+              </label>
+
+              <label>Quarter 3 End
+                <input type="date" id="q3-end">
+              </label>
+
+              <label>Quarter 4 Start
+                <input type="date" id="q4-start">
+              </label>
+
+              <label>Quarter 4 End
+                <input type="date" id="q4-end">
+              </label>
+            </div>
+
+            <div class="settings-card-section">
+              <h3>Dashboard</h3>
+
+              <label>Start On
+                <select id="default-quarter">
+                  <option value="Q1">Quarter 1</option>
+                  <option value="Q2">Quarter 2</option>
+                  <option value="Q3">Quarter 3</option>
+                  <option value="Q4">Quarter 4</option>
+                  <option value="ALL">All Year</option>
+                </select>
+              </label>
+
+              <label>Show graded work from the last
+                <select id="recent-graded-days">
+                  <option value="3">3 days</option>
+                  <option value="7">7 days</option>
+                  <option value="14">14 days</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="settings-actions">
+              <button type="button" onclick="saveSettings()">Save</button>
+              <button type="button" onclick="resetSettings()">Reset</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </header>
+
+    <!-- IMPORT PANEL -->
+    <section class="import-panel">
+      <h2>Canvas Import</h2>
+      <div class="import-controls">
+        <input
+          type="text"
+          id="canvas-token"
+          placeholder="Paste Canvas API Token"
+          autocomplete="off"
+        />
+        <button type="button" onclick="importCanvas()">Import from Canvas</button>
+      </div>
+    </section>
+
+    <!-- MAIN DASHBOARD -->
+    <main class="dashboard">
+
+      <!-- STATS -->
+      <section class="dashboard-stats">
+        <div class="stat-card">
+          <h3 id="due-today">0</h3>
+          <p>Due Today</p>
+        </div>
+
+        <div class="stat-card">
+          <h3 id="due-tomorrow-count">0</h3>
+          <p>Due Tomorrow</p>
+        </div>
+
+        <div class="stat-card">
+          <h3 id="late-count">0</h3>
+          <p>Late</p>
+        </div>
+
+        <div class="stat-card">
+          <h3 id="total-count">0</h3>
+          <p>Total Assignments</p>
+        </div>
+      </section>
+
+      <!-- PRIORITY CARD -->
+      <section id="priority-card">
+        <h2>What Should I Do Today?</h2>
+        <div id="priority-list"></div>
+      </section>
+
+      <!-- DAILY OVERVIEW -->
+      <section id="daily-overview">
+        <h2>Daily Overview</h2>
+        <div class="overview-group">
+          <p class="overview-label">Today</p>
+          <div id="today-list"></div>
+        </div>
+        <div class="overview-group">
+          <p class="overview-label">Tomorrow</p>
+          <div id="tomorrow-list"></div>
+        </div>
+      </section>
+
+      <!-- SEARCH + FILTER -->
+      <section id="assignment-controls">
+        <input
+          type="text"
+          id="search-input"
+          placeholder="Search assignments..."
+          oninput="renderAssignments()"
+        />
+
+        <select id="quarter-select" onchange="setActiveQuarter(this.value)">
+          <option value="Q1">Quarter 1</option>
+          <option value="Q2">Quarter 2</option>
+          <option value="Q3">Quarter 3</option>
+          <option value="Q4">Quarter 4</option>
+          <option value="ALL">All Year</option>
+        </select>
+
+        <select id="filter-select" onchange="renderAssignments()">
+          <option value="all">All</option>
+          <option value="late">Late</option>
+          <option value="due-soon">Due Soon</option>
+        </select>
+      </section>
+
+      <!-- ADD ASSIGNMENT -->
+      <section id="add-assignment">
+        <input type="text" id="assignment-title" placeholder="Assignment name" />
+        <input type="text" id="assignment-class" placeholder="Class" />
+        <input type="date" id="assignment-due" />
+
+        <button type="button" onclick="addAssignment()">Add Assignment</button>
+        <button type="button" onclick="resetData()" class="reset-btn">Reset Dashboard</button>
+      </section>
+
+      <!-- ASSIGNMENT COLUMNS -->
+      <section id="upcoming" class="assignment-column">
+        <h2>Ungraded Assignments</h2>
+        <div id="upcoming-list"></div>
+      </section>
+
+      <section id="late" class="assignment-column">
+        <h2>Late Assignments</h2>
+        <div id="late-list"></div>
+      </section>
+
+      <section id="graded" class="assignment-column">
+        <h2>Recently Graded</h2>
+        <div id="graded-list"></div>
+      </section>
+
+      <!-- TASK LIST -->
+      <section id="tasks">
+        <h2>My Tasks</h2>
+
+        <div class="task-controls">
+          <input id="task-input" type="text" placeholder="Enter a task" />
+          <button type="button" onclick="addTask()">Add Task</button>
+        </div>
+
+        <ul id="task-list"></ul>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
