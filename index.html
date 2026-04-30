@@ -14,6 +14,7 @@
     <header class="navbar">
       <div class="nav-left">
         <h1>Canvas Companion</h1>
+        <p class="nav-tagline">A smarter view of your Canvas assignments</p>
       </div>
 
       <div class="nav-right">
@@ -109,7 +110,8 @@
 
             <div class="settings-actions">
               <button type="button" onclick="saveSettings()">Save</button>
-              <button type="button" onclick="resetSettings()">Reset</button>
+              <button type="button" onclick="resetSettings()">Reset Settings</button>
+              <button type="button" onclick="resetData()" class="reset-btn">Reset Dashboard</button>
             </div>
           </section>
         </div>
@@ -118,15 +120,15 @@
 
     <!-- IMPORT PANEL -->
     <section class="import-panel">
-      <h2>Canvas Import</h2>
+      <h2>Connect Canvas</h2>
       <div class="import-controls">
         <input
           type="text"
           id="canvas-token"
-          placeholder="Paste Canvas API Token"
+          placeholder="Paste your Canvas API token to get started"
           autocomplete="off"
         />
-        <button type="button" onclick="importCanvas()">Import from Canvas</button>
+        <button type="button" onclick="importCanvas()">Import Assignments</button>
       </div>
     </section>
 
@@ -206,7 +208,6 @@
         <input type="date" id="assignment-due" />
 
         <button type="button" onclick="addAssignment()">Add Assignment</button>
-        <button type="button" onclick="resetData()" class="reset-btn">Reset Dashboard</button>
       </section>
 
       <!-- ASSIGNMENT COLUMNS -->
@@ -240,22 +241,6 @@
     </main>
   </div>
 
-  <!-- AI HELP MODAL -->
-  <div id="ai-modal" class="ai-modal-overlay hidden" onclick="closeAiModal(event)">
-    <div class="ai-modal">
-      <div class="ai-modal-header">
-        <h2>AI Study Helper</h2>
-        <button type="button" class="ai-modal-close" onclick="closeAiModal()">✕</button>
-      </div>
-      <p id="ai-modal-assignment" class="ai-modal-assignment"></p>
-      <div id="ai-modal-body" class="ai-modal-body">
-        <div id="ai-loading" class="ai-loading">Thinking...</div>
-        <p id="ai-advice" class="hidden"></p>
-        <p id="ai-error" class="ai-error hidden"></p>
-      </div>
-    </div>
-  </div>
-
-  <script src="script.js"></script>
+<script src="script.js"></script>
 </body>
 </html>

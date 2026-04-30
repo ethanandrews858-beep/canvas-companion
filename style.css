@@ -31,6 +31,13 @@ body {
   font-size: 24px;
 }
 
+.nav-tagline {
+  margin: 2px 0 0;
+  font-size: 12px;
+  opacity: 0.8;
+  font-weight: 400;
+}
+
 .nav-btn {
   background: white;
   color: #2563eb;
