@@ -593,7 +593,7 @@ function createAssignmentCard(assignment) {
   card.appendChild(badge);
 
   // BUTTON RULES:
-  // Late/Needs Attention section: Mark Submitted + Delete
+  // Late/Needs Attention section: Mark Submitted + Delete + AI Help
   if (status === "late" || status === "needs-attention") {
     const submitBtn = document.createElement("button");
     submitBtn.textContent = "Mark Submitted";
@@ -1149,6 +1149,53 @@ document.addEventListener("click", (event) => {
     }
   });
 });
+
+// ---------- AI HELP ----------
+async function openAiHelp(assignment) {
+  const modal = document.getElementById("ai-modal");
+  const loading = document.getElementById("ai-loading");
+  const advice = document.getElementById("ai-advice");
+  const error = document.getElementById("ai-error");
+  const assignmentLabel = document.getElementById("ai-modal-assignment");
+
+  assignmentLabel.textContent = `${assignment.title} — ${assignment.class}`;
+  loading.classList.remove("hidden");
+  advice.classList.add("hidden");
+  error.classList.add("hidden");
+  advice.textContent = "";
+  error.textContent = "";
+  modal.classList.remove("hidden");
+
+  try {
+    const res = await fetch("/ai/help", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(isLoggedIn() ? { Authorization: `Bearer ${authToken}` } : {})
+      },
+      body: JSON.stringify({ assignment })
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) throw new Error(data.error || "Request failed");
+
+    loading.classList.add("hidden");
+    advice.textContent = data.advice;
+    advice.classList.remove("hidden");
+  } catch (err) {
+    loading.classList.add("hidden");
+    error.textContent = err.message === "AI features not configured"
+      ? "AI features require an ANTHROPIC_API_KEY in Railway settings."
+      : "Could not get AI help right now. Try again later.";
+    error.classList.remove("hidden");
+  }
+}
+
+function closeAiModal(event) {
+  if (event && event.target !== document.getElementById("ai-modal")) return;
+  document.getElementById("ai-modal").classList.add("hidden");
+}
 
 // ---------- INIT ----------
 async function initApp() {

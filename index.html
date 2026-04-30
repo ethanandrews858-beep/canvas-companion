@@ -240,6 +240,22 @@
     </main>
   </div>
 
+  <!-- AI HELP MODAL -->
+  <div id="ai-modal" class="ai-modal-overlay hidden" onclick="closeAiModal(event)">
+    <div class="ai-modal">
+      <div class="ai-modal-header">
+        <h2>AI Study Helper</h2>
+        <button type="button" class="ai-modal-close" onclick="closeAiModal()">✕</button>
+      </div>
+      <p id="ai-modal-assignment" class="ai-modal-assignment"></p>
+      <div id="ai-modal-body" class="ai-modal-body">
+        <div id="ai-loading" class="ai-loading">Thinking...</div>
+        <p id="ai-advice" class="hidden"></p>
+        <p id="ai-error" class="ai-error hidden"></p>
+      </div>
+    </div>
+  </div>
+
   <script src="script.js"></script>
 </body>
 </html>
