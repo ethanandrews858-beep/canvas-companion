@@ -2,9 +2,25 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Canvas Companion</title>
   <link rel="stylesheet" href="style.css" />
+
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#2563eb" />
+  <link rel="icon" href="/icons/icon-192.png" type="image/png" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Canvas Co." />
+  <script>
+    (function () {
+      var saved = localStorage.getItem("theme");
+      if (saved === "light" || saved === "dark") {
+        document.documentElement.setAttribute("data-theme", saved);
+      }
+    })();
+  </script>
 </head>
 <body>
 
@@ -18,6 +34,8 @@
       </div>
 
       <div class="nav-right">
+        <button class="theme-toggle-btn" type="button" id="theme-toggle-btn" onclick="toggleTheme()">🌙</button>
+
         <div class="settings-dropdown-wrapper">
           <button class="nav-btn" type="button" id="login-nav-btn" onclick="toggleLogin()">Login</button>
 
@@ -108,6 +126,28 @@
               </label>
             </div>
 
+            <div class="settings-card-section">
+              <h3>Share with a Parent</h3>
+              <p class="grades-hint">Creates a read-only link a parent or tutor can open to see your assignments and grades — no login needed, and it never shows your tasks. Requires being logged in.</p>
+              <div id="share-link-row" class="notif-row hidden">
+                <input type="text" id="share-link-input" readonly />
+                <button type="button" onclick="copyShareLink()">Copy</button>
+              </div>
+              <div class="settings-actions">
+                <button type="button" onclick="generateShareLink()">Get Share Link</button>
+                <button type="button" onclick="revokeShareLink()" class="reset-btn">Revoke Link</button>
+              </div>
+            </div>
+
+            <div class="settings-card-section">
+              <h3>Notifications</h3>
+              <p class="grades-hint">Get a notification when something's due today or just went late, while the app is open in a tab.</p>
+              <div class="notif-row">
+                <span>Status: <strong id="notif-status">Off</strong></span>
+                <button type="button" id="notif-toggle-btn" onclick="enableDueDateNotifications()">Turn On</button>
+              </div>
+            </div>
+
             <div class="settings-actions">
               <button type="button" onclick="saveSettings()">Save</button>
               <button type="button" onclick="resetSettings()">Reset Settings</button>
@@ -164,9 +204,39 @@
         <div id="priority-list"></div>
       </section>
 
+      <!-- MISSING WORK (ALL TIME, IGNORES QUARTER FILTER) -->
+      <section id="missing-work-card">
+        <h2>Missing Work — All Quarters</h2>
+        <p class="grades-hint">Late or zero-graded assignments from every quarter, even ones you're not currently viewing above.</p>
+        <div id="missing-work-list"></div>
+      </section>
+
+      <!-- STUDY PLAN -->
+      <section id="study-plan-card">
+        <h2>Study Plan</h2>
+        <p class="grades-hint">Bigger assignments due in a few days, broken into checkpoints so it's not all done the night before.</p>
+        <div id="study-plan-list"></div>
+      </section>
+
+      <!-- CALENDAR -->
+      <section id="calendar-card">
+        <h2>Calendar</h2>
+        <div class="calendar-header">
+          <button type="button" onclick="changeCalendarMonth(-1)" aria-label="Previous month">‹</button>
+          <span id="calendar-month-label"></span>
+          <button type="button" onclick="changeCalendarMonth(1)" aria-label="Next month">›</button>
+        </div>
+        <div id="calendar-grid" class="calendar-grid"></div>
+        <div class="calendar-export-row">
+          <button type="button" onclick="exportCalendar()">Export to Calendar (.ics)</button>
+          <p class="grades-hint">Downloads a file you can import into Google Calendar, Apple Calendar, or Outlook.</p>
+        </div>
+      </section>
+
       <!-- DAILY OVERVIEW -->
       <section id="daily-overview">
         <h2>Daily Overview</h2>
+        <p id="weekly-digest" class="grades-hint"></p>
         <div class="overview-group">
           <p class="overview-label">Today</p>
           <div id="today-list"></div>
@@ -174,6 +244,10 @@
         <div class="overview-group">
           <p class="overview-label">Tomorrow</p>
           <div id="tomorrow-list"></div>
+        </div>
+        <div class="overview-group">
+          <p class="overview-label">This Week</p>
+          <div id="week-list"></div>
         </div>
       </section>
 
@@ -199,6 +273,15 @@
           <option value="late">Late</option>
           <option value="due-soon">Due Soon</option>
         </select>
+
+        <select id="type-filter" onchange="renderAssignments()">
+          <option value="all">All Types</option>
+          <option value="Homework">Homework</option>
+          <option value="Quiz">Quiz</option>
+          <option value="Test">Test</option>
+          <option value="Project">Project</option>
+          <option value="Other">Other</option>
+        </select>
       </section>
 
       <!-- ADD ASSIGNMENT -->
@@ -206,6 +289,13 @@
         <input type="text" id="assignment-title" placeholder="Assignment name" />
         <input type="text" id="assignment-class" placeholder="Class" />
         <input type="date" id="assignment-due" />
+        <select id="assignment-type">
+          <option value="Homework">Homework</option>
+          <option value="Quiz">Quiz</option>
+          <option value="Test">Test</option>
+          <option value="Project">Project</option>
+          <option value="Other" selected>Other</option>
+        </select>
 
         <button type="button" onclick="addAssignment()">Add Assignment</button>
       </section>
@@ -226,6 +316,33 @@
         <div id="graded-list"></div>
       </section>
 
+      <!-- GRADES -->
+      <section id="grades">
+        <h2>Class Grades</h2>
+        <p class="grades-hint">Calculated from graded assignments in the quarter you're viewing above.</p>
+        <div id="grades-list"></div>
+
+        <div class="grade-target-tool">
+          <h3>What Do I Need?</h3>
+          <p class="grades-hint">Figure out the score you need on an upcoming assignment to hit a target grade.</p>
+
+          <div class="grade-target-fields">
+            <label>Class
+              <select id="grade-target-class"></select>
+            </label>
+            <label>Points possible
+              <input type="number" id="grade-target-points" placeholder="e.g. 100" min="0" step="any" />
+            </label>
+            <label>Target grade %
+              <input type="number" id="grade-target-percent" placeholder="e.g. 90" min="1" max="100" step="any" value="90" />
+            </label>
+            <button type="button" onclick="calculateNeededScore()">Calculate</button>
+          </div>
+
+          <p id="grade-target-result"></p>
+        </div>
+      </section>
+
       <!-- TASK LIST -->
       <section id="tasks">
         <h2>My Tasks</h2>
@@ -236,6 +353,21 @@
         </div>
 
         <ul id="task-list"></ul>
+      </section>
+
+      <!-- STUDY TIMER -->
+      <section id="study-timer">
+        <h2>Study Timer</h2>
+        <div class="timer-display">
+          <span id="timer-time">25:00</span>
+          <span id="timer-mode-label" class="timer-mode-focus">Focus</span>
+        </div>
+        <div class="timer-controls">
+          <button type="button" id="timer-start-btn" onclick="startTimer()">Start</button>
+          <button type="button" id="timer-pause-btn" onclick="pauseTimer()">Pause</button>
+          <button type="button" onclick="resetTimer()">Reset</button>
+        </div>
+        <p class="timer-stats">Focus sessions completed today: <strong id="timer-session-count">0</strong></p>
       </section>
 
     </main>

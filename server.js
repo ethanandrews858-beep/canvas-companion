@@ -5,6 +5,7 @@ const express = require("express");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 const path = require("path");
 const { Pool } = require("pg");
 
@@ -56,6 +57,10 @@ async function initDb() {
       points_possible NUMERIC
     );
   `);
+
+  // Columns added after the original schema — safe to run against a DB that already has the table.
+  await pool.query(`ALTER TABLE assignments ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'Other'`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS share_token TEXT UNIQUE`);
 }
 
 // ---------- AUTH MIDDLEWARE ----------
@@ -213,7 +218,8 @@ app.get("/assignments", requireAuth, async (req, res) => {
     gradedAt: a.graded_at,
     canvasId: a.canvas_id,
     priorityDismissed: a.priority_dismissed,
-    pointsPossible: a.points_possible !== null ? Number(a.points_possible) : null
+    pointsPossible: a.points_possible !== null ? Number(a.points_possible) : null,
+    type: a.type || "Other"
   })));
 });
 
@@ -228,8 +234,8 @@ app.post("/assignments/sync", requireAuth, async (req, res) => {
     for (const a of req.body) {
       await client.query(`
         INSERT INTO assignments
-          (user_id, canvas_id, title, class, due, submitted, manual_submitted, graded, grade, graded_at, priority_dismissed, points_possible)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          (user_id, canvas_id, title, class, due, submitted, manual_submitted, graded, grade, graded_at, priority_dismissed, points_possible, type)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       `, [
         req.user.userId,
         a.canvasId ?? null,
@@ -242,7 +248,8 @@ app.post("/assignments/sync", requireAuth, async (req, res) => {
         a.grade ?? null,
         a.gradedAt ?? null,
         a.priorityDismissed ?? false,
-        a.pointsPossible ?? null
+        a.pointsPossible ?? null,
+        a.type || "Other"
       ]);
     }
 
@@ -255,6 +262,50 @@ app.post("/assignments/sync", requireAuth, async (req, res) => {
   } finally {
     client.release();
   }
+});
+
+// ---------- SHARE WITH A PARENT ----------
+app.post("/share/token", requireAuth, async (req, res) => {
+  const { rows } = await pool.query("SELECT share_token FROM users WHERE id = $1", [req.user.userId]);
+  let token = rows[0]?.share_token;
+
+  if (!token) {
+    token = crypto.randomBytes(24).toString("hex");
+    await pool.query("UPDATE users SET share_token = $1 WHERE id = $2", [token, req.user.userId]);
+  }
+
+  res.json({ token });
+});
+
+app.post("/share/revoke", requireAuth, async (req, res) => {
+  await pool.query("UPDATE users SET share_token = NULL WHERE id = $1", [req.user.userId]);
+  res.json({ ok: true });
+});
+
+// Public and unauthenticated on purpose — this is the read-only link a parent opens.
+// Only ever returns assignment/grade data, never tasks, the account email, or the token owner's identity.
+app.get("/shared/:token", async (req, res) => {
+  const { rows } = await pool.query("SELECT id FROM users WHERE share_token = $1", [req.params.token]);
+  const user = rows[0];
+  if (!user) return res.status(404).json({ error: "This share link is invalid or has been revoked." });
+
+  const { rows: assignmentRows } = await pool.query(
+    "SELECT * FROM assignments WHERE user_id = $1 ORDER BY due IS NULL, due ASC",
+    [user.id]
+  );
+
+  res.json(assignmentRows.map(a => ({
+    title: a.title,
+    class: a.class,
+    due: a.due !== null ? Number(a.due) : null,
+    submitted: a.submitted,
+    manualSubmitted: a.manual_submitted,
+    graded: a.graded,
+    grade: a.grade,
+    gradedAt: a.graded_at,
+    pointsPossible: a.points_possible !== null ? Number(a.points_possible) : null,
+    type: a.type || "Other"
+  })));
 });
 
 // ---------- CANVAS IMPORT ----------
@@ -343,7 +394,7 @@ app.post("/import", async (req, res) => {
 
 
 // ---------- START ----------
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 initDb()
   .then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

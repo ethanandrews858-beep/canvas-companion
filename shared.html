@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Shared Assignments — Canvas Companion</title>
+  <link rel="stylesheet" href="style.css" />
+  <meta name="theme-color" content="#2563eb" />
+  <link rel="icon" href="/icons/icon-192.png" type="image/png" />
+</head>
+<body>
+
+  <div class="container">
+    <header class="navbar">
+      <div class="nav-left">
+        <h1>Canvas Companion</h1>
+        <p class="nav-tagline">Shared view — read only</p>
+      </div>
+    </header>
+
+    <main class="dashboard" id="shared-dashboard">
+      <p id="shared-status" class="grades-hint" style="grid-column: 1 / -1; margin: 20px;">Loading shared assignments…</p>
+
+      <section id="shared-grades" class="hidden">
+        <h2>Class Grades</h2>
+        <div id="shared-grades-list"></div>
+      </section>
+
+      <section id="shared-late" class="assignment-column hidden">
+        <h2>Late / Needs Attention</h2>
+        <div id="shared-late-list"></div>
+      </section>
+
+      <section id="shared-upcoming" class="assignment-column hidden">
+        <h2>Upcoming</h2>
+        <div id="shared-upcoming-list"></div>
+      </section>
+
+      <section id="shared-graded" class="assignment-column hidden">
+        <h2>Graded</h2>
+        <div id="shared-graded-list"></div>
+      </section>
+    </main>
+  </div>
+
+<script src="shared.js"></script>
+</body>
+</html>

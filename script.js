@@ -1,7 +1,17 @@
 console.log("Canvas Companion script loaded");
 
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(err => {
+      console.error("Service worker registration failed:", err);
+    });
+  });
+}
+
 let assignments = [];
 let tasks = [];
+
+const ASSIGNMENT_TYPES = ["Homework", "Quiz", "Test", "Project", "Other"];
 
 const DEFAULT_SETTINGS = {
   quarters: {
@@ -203,7 +213,8 @@ function loadAssignments() {
         gradedAt: a.gradedAt ?? null,
         canvasId: a.canvasId ?? null,
         priorityDismissed: Boolean(a.priorityDismissed),
-        pointsPossible: typeof a.pointsPossible === "number" ? a.pointsPossible : null
+        pointsPossible: typeof a.pointsPossible === "number" ? a.pointsPossible : null,
+        type: ASSIGNMENT_TYPES.includes(a.type) ? a.type : "Other"
       }))
       .filter(a => a.title && a.class);
   } catch (error) {
@@ -404,6 +415,15 @@ function markGraded(assignment) {
   renderAssignments();
 }
 
+function changeAssignmentType(assignment, newType) {
+  if (!ASSIGNMENT_TYPES.includes(newType)) return;
+  const idx = assignments.indexOf(assignment);
+  if (idx === -1) return;
+  assignments[idx].type = newType;
+  saveAssignments();
+  renderAssignments();
+}
+
 function deleteAssignment(assignment) {
   const index = assignments.indexOf(assignment);
   if (index !== -1) {
@@ -538,6 +558,432 @@ function renderPriorityCard() {
   });
 }
 
+// ---------- GRADES ----------
+function parseGradeToPoints(assignment) {
+  const isActuallyGraded = assignment.graded || (assignment.grade !== null && assignment.grade !== "");
+  if (!isActuallyGraded) return null;
+
+  const raw = String(assignment.grade ?? "").trim();
+  if (!raw) return null;
+
+  const fractionMatch = raw.match(/^(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)$/);
+  if (fractionMatch) {
+    return { earned: Number(fractionMatch[1]), possible: Number(fractionMatch[2]) };
+  }
+
+  const numeric = Number(raw);
+  if (Number.isNaN(numeric)) return null; // e.g. "Complete" or a letter grade — not a usable score
+
+  if (typeof assignment.pointsPossible === "number" && assignment.pointsPossible > 0) {
+    return { earned: numeric, possible: assignment.pointsPossible };
+  }
+
+  return { earned: numeric, possible: 100 };
+}
+
+function getClassGradeTotals() {
+  const totals = {};
+
+  getVisibleAssignments().forEach(a => {
+    const points = parseGradeToPoints(a);
+    if (!points || points.possible <= 0) return;
+
+    if (!totals[a.class]) totals[a.class] = { earned: 0, possible: 0, count: 0 };
+    totals[a.class].earned += points.earned;
+    totals[a.class].possible += points.possible;
+    totals[a.class].count += 1;
+  });
+
+  return totals;
+}
+
+function computeClassGrades() {
+  const totals = getClassGradeTotals();
+
+  return Object.entries(totals)
+    .map(([className, stats]) => ({
+      class: className,
+      percent: (stats.earned / stats.possible) * 100,
+      count: stats.count
+    }))
+    .sort((a, b) => a.class.localeCompare(b.class));
+}
+
+function percentToLetter(percent) {
+  if (percent >= 97) return "A+";
+  if (percent >= 93) return "A";
+  if (percent >= 90) return "A-";
+  if (percent >= 87) return "B+";
+  if (percent >= 83) return "B";
+  if (percent >= 80) return "B-";
+  if (percent >= 77) return "C+";
+  if (percent >= 73) return "C";
+  if (percent >= 70) return "C-";
+  if (percent >= 67) return "D+";
+  if (percent >= 63) return "D";
+  if (percent >= 60) return "D-";
+  return "F";
+}
+
+function renderGrades() {
+  const list = document.getElementById("grades-list");
+  const classSelect = document.getElementById("grade-target-class");
+  if (!list || !classSelect) return;
+
+  list.innerHTML = "";
+  const grades = computeClassGrades();
+
+  if (grades.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "grades-empty";
+    empty.textContent = "No graded assignments with a numeric score yet — grades will show up here once Canvas syncs them or you mark some as graded.";
+    list.appendChild(empty);
+  } else {
+    grades.forEach(g => {
+      const percent = Math.max(0, Math.min(100, g.percent));
+      const letter = percentToLetter(g.percent);
+      const isFailing = g.percent < 60;
+
+      const card = document.createElement("div");
+      card.className = "grade-card";
+      card.innerHTML = `
+        <div class="grade-card-header">
+          <h3>${g.class}</h3>
+          <span class="grade-letter${isFailing ? " grade-letter-critical" : ""}">${letter}</span>
+        </div>
+        <div class="grade-meter">
+          <div class="grade-meter-fill${isFailing ? " critical" : ""}" style="width: ${percent}%"></div>
+        </div>
+        <p class="grade-meta">${g.percent.toFixed(1)}% · ${g.count} graded assignment${g.count === 1 ? "" : "s"}</p>
+      `;
+      list.appendChild(card);
+    });
+  }
+
+  const previousSelection = classSelect.value;
+  classSelect.innerHTML = "";
+
+  const classNames = [...new Set(getVisibleAssignments().map(a => a.class))].sort((a, b) => a.localeCompare(b));
+
+  if (classNames.length === 0) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No classes yet";
+    classSelect.appendChild(option);
+  } else {
+    classNames.forEach(className => {
+      const option = document.createElement("option");
+      option.value = className;
+      option.textContent = className;
+      classSelect.appendChild(option);
+    });
+
+    if (classNames.includes(previousSelection)) classSelect.value = previousSelection;
+  }
+}
+
+function calculateNeededScore() {
+  const classSelect = document.getElementById("grade-target-class");
+  const pointsInput = document.getElementById("grade-target-points");
+  const percentInput = document.getElementById("grade-target-percent");
+  const resultEl = document.getElementById("grade-target-result");
+
+  const className = classSelect.value;
+  const newPoints = Number(pointsInput.value);
+  const targetPercent = Number(percentInput.value);
+
+  if (!className) {
+    resultEl.textContent = "Add a graded assignment for a class first — there's nothing to calculate yet.";
+    return;
+  }
+  if (!newPoints || newPoints <= 0) {
+    resultEl.textContent = "Enter how many points the next assignment is worth.";
+    return;
+  }
+  if (!targetPercent || targetPercent <= 0 || targetPercent > 100) {
+    resultEl.textContent = "Enter a target grade between 1 and 100.";
+    return;
+  }
+
+  const totals = getClassGradeTotals()[className];
+  const earned = totals ? totals.earned : 0;
+  const possible = totals ? totals.possible : 0;
+
+  const needed = (targetPercent / 100) * (possible + newPoints) - earned;
+
+  if (needed <= 0) {
+    resultEl.textContent = `You're already above ${targetPercent}% in ${className} — even a 0 on this assignment keeps you at or above that target.`;
+  } else if (needed > newPoints) {
+    const bestCase = ((earned + newPoints) / (possible + newPoints)) * 100;
+    resultEl.textContent = `Even a perfect score on this assignment only gets you to ${bestCase.toFixed(1)}% — you can't reach ${targetPercent}% in ${className} from this one assignment alone.`;
+  } else {
+    const neededPercent = (needed / newPoints) * 100;
+    resultEl.textContent = `You need at least ${needed.toFixed(1)} / ${newPoints} points (${neededPercent.toFixed(1)}%) on this assignment to reach ${targetPercent}% in ${className}.`;
+  }
+}
+
+// ---------- MISSING WORK (ALL TIME) ----------
+function getQuarterLabelForDate(due) {
+  if (due === null || due === undefined || Number.isNaN(due)) return null;
+
+  for (const key of ["Q1", "Q2", "Q3", "Q4"]) {
+    const range = getQuarterRange(key);
+    if (range && due >= range.start && due <= range.end) return range.name;
+  }
+
+  return null;
+}
+
+function getAllTimeMissingWork() {
+  return assignments
+    .filter(a => {
+      const status = getAssignmentStatus(a);
+      return status === "late" || status === "needs-attention";
+    })
+    .sort((a, b) => {
+      const aDue = a.due ?? Number.MAX_SAFE_INTEGER;
+      const bDue = b.due ?? Number.MAX_SAFE_INTEGER;
+      return aDue - bDue;
+    });
+}
+
+function renderMissingWork() {
+  const container = document.getElementById("missing-work-list");
+  if (!container) return;
+
+  container.innerHTML = "";
+  const items = getAllTimeMissingWork();
+
+  if (items.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "overview-empty";
+    empty.textContent = "Nothing missing anywhere — you're all caught up.";
+    container.appendChild(empty);
+    return;
+  }
+
+  items.forEach(a => {
+    const quarterLabel = getQuarterLabelForDate(a.due);
+
+    const row = document.createElement("div");
+    row.className = "missing-work-item";
+    row.innerHTML = `
+      <strong>${a.title}</strong>
+      <span class="missing-work-meta">${a.class} · ${getDueText(a)}${quarterLabel ? ` · ${quarterLabel}` : ""}</span>
+    `;
+    container.appendChild(row);
+  });
+}
+
+// ---------- STUDY PLAN ----------
+function getStudyPlanAssignments() {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
+  return getVisibleAssignments()
+    .filter(a => {
+      if (getAssignmentStatus(a) !== "upcoming") return false;
+      if (a.due === null || a.due === undefined || Number.isNaN(a.due)) return false;
+
+      const daysUntil = Math.ceil((a.due - now.getTime()) / (1000 * 60 * 60 * 24));
+      return daysUntil >= 2 && daysUntil <= 14;
+    })
+    .map(a => ({
+      ...a,
+      daysUntil: Math.ceil((a.due - now.getTime()) / (1000 * 60 * 60 * 24))
+    }))
+    .sort((a, b) => a.daysUntil - b.daysUntil);
+}
+
+function buildStudyCheckpoints(assignment) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const dueDate = new Date(assignment.due);
+  dueDate.setHours(0, 0, 0, 0);
+
+  const checkpoints = [{ label: "Start", date: today.getTime() }];
+
+  if (assignment.daysUntil >= 4) {
+    const halfway = new Date(today);
+    halfway.setDate(halfway.getDate() + Math.floor(assignment.daysUntil / 2));
+    checkpoints.push({ label: "Halfway check-in", date: halfway.getTime() });
+  }
+
+  const finish = new Date(dueDate);
+  finish.setDate(finish.getDate() - 1);
+  checkpoints.push({ label: "Finish & review", date: finish.getTime() });
+
+  return checkpoints;
+}
+
+function renderStudyPlan() {
+  const container = document.getElementById("study-plan-list");
+  if (!container) return;
+
+  container.innerHTML = "";
+  const items = getStudyPlanAssignments();
+
+  if (items.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "overview-empty";
+    empty.textContent = "Nothing far enough out to plan yet — assignments due in 2+ days will show up here.";
+    container.appendChild(empty);
+    return;
+  }
+
+  items.forEach(a => {
+    const checkpoints = buildStudyCheckpoints(a);
+
+    const card = document.createElement("div");
+    card.className = "study-plan-item";
+    card.innerHTML = `
+      <h3>${a.title}</h3>
+      <p class="grades-hint">${a.class} · Due ${formatDate(a.due)} (${a.daysUntil} days away)</p>
+      <div class="study-plan-checkpoints">
+        ${checkpoints.map(c => `<span class="study-checkpoint"><strong>${c.label}:</strong> ${formatDate(c.date)}</span>`).join("")}
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+// ---------- WEEKLY DIGEST ----------
+function getThisWeekAssignments() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const weekEnd = new Date(today);
+  weekEnd.setDate(weekEnd.getDate() + 6);
+
+  return getVisibleAssignments()
+    .filter(a => {
+      if (a.due === null || a.due === undefined || Number.isNaN(a.due)) return false;
+      const dueDate = new Date(a.due);
+      dueDate.setHours(0, 0, 0, 0);
+      return dueDate.getTime() >= today.getTime() && dueDate.getTime() <= weekEnd.getTime();
+    })
+    .sort((a, b) => a.due - b.due);
+}
+
+function renderWeeklyDigest() {
+  const digestEl = document.getElementById("weekly-digest");
+  const weekList = document.getElementById("week-list");
+  if (!digestEl || !weekList) return;
+
+  const items = getThisWeekAssignments();
+
+  digestEl.textContent = items.length === 0
+    ? "Nothing due in the next 7 days."
+    : `${items.length} assignment${items.length === 1 ? "" : "s"} due in the next 7 days.`;
+
+  weekList.innerHTML = "";
+
+  if (items.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "overview-empty";
+    empty.textContent = "Nothing due this week.";
+    weekList.appendChild(empty);
+    return;
+  }
+
+  items.forEach(a => {
+    const item = document.createElement("div");
+    item.className = "today-item";
+    item.textContent = `${a.title} (${a.class}) — ${getDueText(a)}`;
+    weekList.appendChild(item);
+  });
+}
+
+// ---------- CALENDAR ----------
+let calendarViewYear = new Date().getFullYear();
+let calendarViewMonth = new Date().getMonth();
+
+function changeCalendarMonth(delta) {
+  calendarViewMonth += delta;
+  if (calendarViewMonth < 0) { calendarViewMonth = 11; calendarViewYear--; }
+  if (calendarViewMonth > 11) { calendarViewMonth = 0; calendarViewYear++; }
+  renderCalendar();
+}
+
+function getAssignmentsByDay() {
+  const map = {};
+  assignments.forEach(a => {
+    if (a.due === null || a.due === undefined || Number.isNaN(a.due)) return;
+    const d = new Date(a.due);
+    const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    if (!map[key]) map[key] = [];
+    map[key].push(a);
+  });
+  return map;
+}
+
+function renderCalendar() {
+  const grid = document.getElementById("calendar-grid");
+  const label = document.getElementById("calendar-month-label");
+  if (!grid || !label) return;
+
+  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  label.textContent = `${monthNames[calendarViewMonth]} ${calendarViewYear}`;
+
+  grid.innerHTML = "";
+
+  ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].forEach(d => {
+    const head = document.createElement("div");
+    head.className = "calendar-day-name";
+    head.textContent = d;
+    grid.appendChild(head);
+  });
+
+  const firstOfMonth = new Date(calendarViewYear, calendarViewMonth, 1);
+  const startWeekday = firstOfMonth.getDay();
+  const daysInMonth = new Date(calendarViewYear, calendarViewMonth + 1, 0).getDate();
+  const byDay = getAssignmentsByDay();
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  for (let i = 0; i < startWeekday; i++) {
+    const blank = document.createElement("div");
+    blank.className = "calendar-cell calendar-cell-empty";
+    grid.appendChild(blank);
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const cell = document.createElement("div");
+    cell.className = "calendar-cell";
+
+    const cellDate = new Date(calendarViewYear, calendarViewMonth, day);
+    if (cellDate.getTime() === today.getTime()) cell.classList.add("calendar-cell-today");
+
+    const dayAssignments = byDay[`${calendarViewYear}-${calendarViewMonth}-${day}`] || [];
+
+    const numberEl = document.createElement("div");
+    numberEl.className = "calendar-day-number";
+    numberEl.textContent = day;
+    cell.appendChild(numberEl);
+
+    dayAssignments.slice(0, 3).forEach(a => {
+      const status = getAssignmentStatus(a);
+      const item = document.createElement("div");
+      item.className = "calendar-item";
+      if (status === "late" || status === "needs-attention") item.classList.add("calendar-item-late");
+      else if (status === "graded") item.classList.add("calendar-item-graded");
+      item.textContent = a.title;
+      item.title = `${a.title} — ${a.class}`;
+      cell.appendChild(item);
+    });
+
+    if (dayAssignments.length > 3) {
+      const more = document.createElement("div");
+      more.className = "calendar-item-more";
+      more.textContent = `+${dayAssignments.length - 3} more`;
+      cell.appendChild(more);
+    }
+
+    grid.appendChild(cell);
+  }
+}
+
 function formatGradeDisplay(assignment) {
   const grade = assignment.grade;
   if (grade === null || grade === "") return null;
@@ -592,8 +1038,21 @@ function createAssignmentCard(assignment) {
 
   card.appendChild(badge);
 
+  const typeSelect = document.createElement("select");
+  typeSelect.className = "assignment-type-select";
+  typeSelect.title = "Assignment type";
+  ASSIGNMENT_TYPES.forEach(t => {
+    const option = document.createElement("option");
+    option.value = t;
+    option.textContent = t;
+    if (t === assignment.type) option.selected = true;
+    typeSelect.appendChild(option);
+  });
+  typeSelect.onchange = () => changeAssignmentType(assignment, typeSelect.value);
+  card.appendChild(typeSelect);
+
   // BUTTON RULES:
-  // Late/Needs Attention section: Mark Submitted + Delete + AI Help
+  // Late/Needs Attention section: Mark Submitted + Delete
   if (status === "late" || status === "needs-attention") {
     const submitBtn = document.createElement("button");
     submitBtn.textContent = "Mark Submitted";
@@ -648,9 +1107,11 @@ function renderAssignments() {
 
   const searchInput = document.getElementById("search-input");
   const filterSelect = document.getElementById("filter-select");
+  const typeFilterSelect = document.getElementById("type-filter");
 
   const searchText = searchInput ? searchInput.value.toLowerCase().trim() : "";
   const filter = filterSelect ? filterSelect.value : "all";
+  const typeFilter = typeFilterSelect ? typeFilterSelect.value : "all";
 
   upcomingList.innerHTML = "";
   lateList.innerHTML = "";
@@ -703,6 +1164,8 @@ function renderAssignments() {
 
     if (!matchesSearch) return;
 
+    if (typeFilter !== "all" && (assignment.type || "Other") !== typeFilter) return;
+
     if (filter === "late" && !(status === "late" || status === "needs-attention")) return;
 
     if (filter === "due-soon") {
@@ -747,6 +1210,11 @@ function renderAssignments() {
   }
 
   renderPriorityCard();
+  renderGrades();
+  renderMissingWork();
+  renderStudyPlan();
+  renderCalendar();
+  renderWeeklyDigest();
 }
 
 // ---------- IMPORT ----------
@@ -817,7 +1285,8 @@ async function importCanvas() {
         gradedAt: isGraded ? (existingAssignment?.gradedAt || null) : null,
         canvasId: a.canvasId || null,
         pointsPossible: typeof a.pointsPossible === "number" ? a.pointsPossible : null,
-        priorityDismissed: existingAssignment?.priorityDismissed ?? false
+        priorityDismissed: existingAssignment?.priorityDismissed ?? false,
+        type: existingAssignment?.type || "Other"
       };
 
       if (existingIndex !== -1) {
@@ -859,10 +1328,12 @@ function addAssignment() {
   const titleInput = document.getElementById("assignment-title");
   const classInput = document.getElementById("assignment-class");
   const dueInput = document.getElementById("assignment-due");
+  const typeInput = document.getElementById("assignment-type");
 
   const title = titleInput.value.trim();
   const course = classInput.value.trim();
   const dueValue = dueInput.value;
+  const type = ASSIGNMENT_TYPES.includes(typeInput?.value) ? typeInput.value : "Other";
 
   if (!title || !course || !dueValue) {
     alert("Fill out all assignment fields first.");
@@ -882,7 +1353,8 @@ function addAssignment() {
     gradedAt: null,
     canvasId: null,
     priorityDismissed: false,
-    pointsPossible: null
+    pointsPossible: null,
+    type
   });
 
   saveAssignments();
@@ -1120,6 +1592,332 @@ function renderTasks() {
   });
 }
 
+// ---------- THEME ----------
+function getEffectiveTheme() {
+  const saved = localStorage.getItem("theme");
+  if (saved === "light" || saved === "dark") return saved;
+  return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function setTheme(theme) {
+  localStorage.setItem("theme", theme);
+  document.documentElement.setAttribute("data-theme", theme);
+  renderThemeToggleButton();
+}
+
+function toggleTheme() {
+  setTheme(getEffectiveTheme() === "dark" ? "light" : "dark");
+}
+
+function renderThemeToggleButton() {
+  const btn = document.getElementById("theme-toggle-btn");
+  if (!btn) return;
+  btn.textContent = getEffectiveTheme() === "dark" ? "☀️" : "🌙";
+}
+
+// ---------- NOTIFICATIONS (shared helper) ----------
+function notifyStudent(title, body) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  try {
+    new Notification(title, { body, icon: "/icons/icon-192.png" });
+  } catch {}
+}
+
+// ---------- SHARE WITH A PARENT ----------
+async function generateShareLink() {
+  if (!isLoggedIn()) {
+    alert("Log in first — the share link is tied to your account's saved data.");
+    return;
+  }
+
+  try {
+    const res = await fetch("/share/token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken}` }
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to create link");
+    showShareLink(data.token);
+  } catch {
+    alert("Could not create a share link right now. Try again later.");
+  }
+}
+
+function showShareLink(token) {
+  const row = document.getElementById("share-link-row");
+  const input = document.getElementById("share-link-input");
+  if (!row || !input) return;
+
+  input.value = `${location.origin}/shared.html?token=${token}`;
+  row.classList.remove("hidden");
+}
+
+async function copyShareLink() {
+  const input = document.getElementById("share-link-input");
+  if (!input || !input.value) return;
+
+  try {
+    await navigator.clipboard.writeText(input.value);
+    alert("Link copied.");
+  } catch {
+    input.select();
+    alert("Couldn't auto-copy — the link is selected, press Ctrl+C (or Cmd+C) to copy it.");
+  }
+}
+
+async function revokeShareLink() {
+  if (!isLoggedIn()) return;
+
+  const confirmed = confirm("This breaks the link for anyone you already shared it with. Continue?");
+  if (!confirmed) return;
+
+  try {
+    await fetch("/share/revoke", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken}` }
+    });
+    document.getElementById("share-link-row")?.classList.add("hidden");
+    alert("Share link revoked.");
+  } catch {
+    alert("Could not revoke the link right now. Try again later.");
+  }
+}
+
+// ---------- DUE-DATE NOTIFICATIONS ----------
+// Foreground-only: these fire while the app is open in a tab. True background
+// notifications (app closed) need a server-side push system — see project notes.
+function isNotificationsEnabled() {
+  return localStorage.getItem("dueDateNotificationsEnabled") === "true";
+}
+
+async function enableDueDateNotifications() {
+  if (!("Notification" in window)) {
+    alert("Your browser doesn't support notifications.");
+    return;
+  }
+
+  const permission = await Notification.requestPermission();
+
+  if (permission === "granted") {
+    localStorage.setItem("dueDateNotificationsEnabled", "true");
+    renderNotificationSettingUI();
+    checkDueDateNotifications();
+  } else {
+    alert("Notifications weren't allowed. You can turn them on later in your browser's site settings.");
+  }
+}
+
+function disableDueDateNotifications() {
+  localStorage.setItem("dueDateNotificationsEnabled", "false");
+  renderNotificationSettingUI();
+}
+
+function renderNotificationSettingUI() {
+  const btn = document.getElementById("notif-toggle-btn");
+  const status = document.getElementById("notif-status");
+  if (!btn || !status) return;
+
+  const enabled = isNotificationsEnabled() && "Notification" in window && Notification.permission === "granted";
+  status.textContent = enabled ? "On" : "Off";
+  btn.textContent = enabled ? "Turn Off" : "Turn On";
+  btn.onclick = enabled ? disableDueDateNotifications : enableDueDateNotifications;
+}
+
+function getNotifiedRecord() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("notifiedAssignments") || "null");
+    if (saved && saved.date === getTodayDateKey()) return saved;
+  } catch {}
+  return { date: getTodayDateKey(), ids: [] };
+}
+
+function markNotified(id) {
+  const record = getNotifiedRecord();
+  if (!record.ids.includes(id)) record.ids.push(id);
+  localStorage.setItem("notifiedAssignments", JSON.stringify(record));
+}
+
+function checkDueDateNotifications() {
+  if (!isNotificationsEnabled() || !("Notification" in window) || Notification.permission !== "granted") return;
+
+  const record = getNotifiedRecord();
+
+  assignments.forEach(a => {
+    const status = getAssignmentStatus(a);
+    const dueText = getDueText(a);
+    const id = a.canvasId || `${a.title}|${a.class}|${a.due}`;
+
+    if (record.ids.includes(id)) return;
+
+    if (status === "late") {
+      notifyStudent("Assignment went late", `${a.title} (${a.class}) is now late.`);
+      markNotified(id);
+    } else if (dueText === "Today") {
+      notifyStudent("Due today", `${a.title} (${a.class}) is due today.`);
+      markNotified(id);
+    }
+  });
+}
+
+// ---------- CALENDAR EXPORT (.ics) ----------
+function icsTimestamp() {
+  const now = new Date();
+  const pad = n => String(n).padStart(2, "0");
+  return `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`;
+}
+
+function icsEscape(text) {
+  return String(text).replace(/[\\,;]/g, match => `\\${match}`).replace(/\n/g, "\\n");
+}
+
+function generateIcsContent() {
+  const pad = n => String(n).padStart(2, "0");
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Canvas Companion//EN", "CALSCALE:GREGORIAN"];
+
+  assignments.forEach(a => {
+    if (a.due === null || a.due === undefined || Number.isNaN(a.due)) return;
+
+    const dueDate = new Date(a.due);
+    const dateStr = `${dueDate.getFullYear()}${pad(dueDate.getMonth() + 1)}${pad(dueDate.getDate())}`;
+    const uid = `${(a.canvasId || `${a.title}-${a.class}-${a.due}`).replace(/[^a-zA-Z0-9]/g, "")}@canvas-companion`;
+
+    lines.push("BEGIN:VEVENT");
+    lines.push(`UID:${uid}`);
+    lines.push(`DTSTAMP:${icsTimestamp()}`);
+    lines.push(`DTSTART;VALUE=DATE:${dateStr}`);
+    lines.push(`SUMMARY:${icsEscape(a.title)} (${icsEscape(a.class)})`);
+    lines.push(`DESCRIPTION:${icsEscape(a.type || "Other")} for ${icsEscape(a.class)}`);
+    lines.push("END:VEVENT");
+  });
+
+  lines.push("END:VCALENDAR");
+  return lines.join("\r\n");
+}
+
+function exportCalendar() {
+  const withDueDates = assignments.filter(a => a.due !== null && a.due !== undefined && !Number.isNaN(a.due));
+
+  if (withDueDates.length === 0) {
+    alert("No assignments with due dates to export yet.");
+    return;
+  }
+
+  const blob = new Blob([generateIcsContent()], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "canvas-companion-assignments.ics";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+// ---------- STUDY TIMER ----------
+const TIMER_FOCUS_MINUTES = 25;
+const TIMER_BREAK_MINUTES = 5;
+
+let timerMode = "focus";
+let timerRemainingSeconds = TIMER_FOCUS_MINUTES * 60;
+let timerIntervalId = null;
+
+function getTodayDateKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+}
+
+function getTimerSessionCount() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("studyTimerSessions") || "null");
+    if (saved && saved.date === getTodayDateKey()) return saved.count;
+  } catch {}
+  return 0;
+}
+
+function incrementTimerSessionCount() {
+  const count = getTimerSessionCount() + 1;
+  localStorage.setItem("studyTimerSessions", JSON.stringify({ date: getTodayDateKey(), count }));
+  renderTimerSessionCount();
+}
+
+function renderTimerSessionCount() {
+  const el = document.getElementById("timer-session-count");
+  if (el) el.textContent = getTimerSessionCount();
+}
+
+function playTimerSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.value = 880;
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    oscillator.start();
+    oscillator.stop(ctx.currentTime + 0.3);
+  } catch {}
+}
+
+function renderTimerDisplay() {
+  const timeEl = document.getElementById("timer-time");
+  const modeEl = document.getElementById("timer-mode-label");
+  if (!timeEl || !modeEl) return;
+
+  const minutes = Math.floor(timerRemainingSeconds / 60);
+  const seconds = timerRemainingSeconds % 60;
+  timeEl.textContent = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+
+  modeEl.textContent = timerMode === "focus" ? "Focus" : "Break";
+  modeEl.classList.toggle("timer-mode-focus", timerMode === "focus");
+  modeEl.classList.toggle("timer-mode-break", timerMode === "break");
+}
+
+function timerTick() {
+  timerRemainingSeconds--;
+
+  if (timerRemainingSeconds <= 0) {
+    playTimerSound();
+    notifyStudent(
+      timerMode === "focus" ? "Focus session done!" : "Break's over",
+      timerMode === "focus" ? "Take a 5 minute break." : "Back to it — 25 more minutes."
+    );
+
+    if (timerMode === "focus") incrementTimerSessionCount();
+
+    timerMode = timerMode === "focus" ? "break" : "focus";
+    timerRemainingSeconds = (timerMode === "focus" ? TIMER_FOCUS_MINUTES : TIMER_BREAK_MINUTES) * 60;
+  }
+
+  renderTimerDisplay();
+}
+
+function startTimer() {
+  if (timerIntervalId) return;
+  timerIntervalId = setInterval(timerTick, 1000);
+}
+
+function pauseTimer() {
+  if (timerIntervalId) {
+    clearInterval(timerIntervalId);
+    timerIntervalId = null;
+  }
+}
+
+function resetTimer() {
+  pauseTimer();
+  timerMode = "focus";
+  timerRemainingSeconds = TIMER_FOCUS_MINUTES * 60;
+  renderTimerDisplay();
+}
+
+function initStudyTimer() {
+  renderTimerDisplay();
+  renderTimerSessionCount();
+}
+
 // ---------- RESET ----------
 function resetData() {
   const confirmed = confirm("This will delete all assignments and tasks saved in this browser. Continue?");
@@ -1150,59 +1948,17 @@ document.addEventListener("click", (event) => {
   });
 });
 
-// ---------- AI HELP ----------
-async function openAiHelp(assignment) {
-  const modal = document.getElementById("ai-modal");
-  const loading = document.getElementById("ai-loading");
-  const advice = document.getElementById("ai-advice");
-  const error = document.getElementById("ai-error");
-  const assignmentLabel = document.getElementById("ai-modal-assignment");
-
-  assignmentLabel.textContent = `${assignment.title} — ${assignment.class}`;
-  loading.classList.remove("hidden");
-  advice.classList.add("hidden");
-  error.classList.add("hidden");
-  advice.textContent = "";
-  error.textContent = "";
-  modal.classList.remove("hidden");
-
-  try {
-    const res = await fetch("/ai/help", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(isLoggedIn() ? { Authorization: `Bearer ${authToken}` } : {})
-      },
-      body: JSON.stringify({ assignment })
-    });
-
-    const data = await res.json();
-
-    if (!res.ok) throw new Error(data.error || "Request failed");
-
-    loading.classList.add("hidden");
-    advice.textContent = data.advice;
-    advice.classList.remove("hidden");
-  } catch (err) {
-    loading.classList.add("hidden");
-    error.textContent = err.message === "AI features not configured"
-      ? "AI features require an ANTHROPIC_API_KEY in Railway settings."
-      : "Could not get AI help right now. Try again later.";
-    error.classList.remove("hidden");
-  }
-}
-
-function closeAiModal(event) {
-  if (event && event.target !== document.getElementById("ai-modal")) return;
-  document.getElementById("ai-modal").classList.add("hidden");
-}
-
 // ---------- INIT ----------
 async function initApp() {
+  renderThemeToggleButton();
   loadAssignments();
   fillSettingsForm();
   syncQuarterDropdown();
   renderAssignments();
+  initStudyTimer();
+  renderNotificationSettingUI();
+  checkDueDateNotifications();
+  setInterval(checkDueDateNotifications, 20 * 60 * 1000);
   await checkAuthState();
   console.log(`Canvas Companion initialized for ${getActiveQuarter().name}`);
 }
