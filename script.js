@@ -1592,6 +1592,27 @@ function renderTasks() {
   });
 }
 
+// ---------- PAGE NAVIGATION ----------
+const APP_PAGES = ["today", "assignments", "calendar", "grades", "tasks"];
+
+function setActivePage(pageId) {
+  if (!APP_PAGES.includes(pageId)) pageId = "today";
+
+  document.querySelectorAll(".app-page").forEach(page => {
+    page.classList.toggle("active", page.dataset.page === pageId);
+  });
+
+  const select = document.getElementById("page-select");
+  if (select) select.value = pageId;
+
+  localStorage.setItem("activePage", pageId);
+  window.scrollTo(0, 0);
+}
+
+function initPageNav() {
+  setActivePage(localStorage.getItem("activePage") || "today");
+}
+
 // ---------- THEME ----------
 function getEffectiveTheme() {
   const saved = localStorage.getItem("theme");
@@ -1950,6 +1971,7 @@ document.addEventListener("click", (event) => {
 
 // ---------- INIT ----------
 async function initApp() {
+  initPageNav();
   renderThemeToggleButton();
   loadAssignments();
   fillSettingsForm();

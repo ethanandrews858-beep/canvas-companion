@@ -353,7 +353,7 @@ section h2 {
 }
 
 .import-panel {
-  margin: 20px;
+  grid-column: 1 / -1;
 }
 
 .import-controls {
@@ -389,8 +389,37 @@ section h2 {
    and the page — wider than the viewport. min-width: 0 lets tracks shrink
    to the column width instead, so overflow happens inside the section
    (wrap/scroll) rather than blowing out the page. */
-.dashboard > section {
+.dashboard section {
   min-width: 0;
+}
+
+/* Each page is a set of grid children wrapped in one div. display: contents
+   lets the wrapper disappear from the box model when active, so its section
+   children still lay out directly against .dashboard's grid — same CSS as
+   before pagination existed, just gated by which page is showing. */
+.app-page {
+  display: none;
+}
+
+.app-page.active {
+  display: contents;
+}
+
+.page-nav {
+  padding: 0 20px;
+  margin: 16px 0;
+}
+
+.page-nav select {
+  width: 100%;
+  padding: 12px 14px;
+  font-size: 15px;
+  font-weight: 600;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
 }
 
 select {
@@ -1121,8 +1150,12 @@ button:active {
     justify-content: flex-start;
   }
 
-  .import-panel,
   .dashboard {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .page-nav {
     padding-left: 12px;
     padding-right: 12px;
   }
