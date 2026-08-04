@@ -1,6 +1,6 @@
 // Canvas Companion service worker
 // Bump this version any time app-shell files change, so old caches get replaced.
-const CACHE_NAME = "canvas-companion-v1";
+const CACHE_NAME = "canvas-companion-v2";
 
 const APP_SHELL = [
   "/",
